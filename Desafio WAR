@@ -1,0 +1,289 @@
+/* war.c
+ * Desafio War Estruturado – Tema 1
+ * Versão simples, em C
+ *
+ * Regras (resumidas):
+ * - 6 territórios no mapa (nomeados com regiões brasileiras).
+ * - Dois jogadores: VOCÊ (PLAYER) e CPU.
+ * - Cada território tem dono e número de exércitos.
+ * - Reforços por turno (baseado no número de territórios do jogador).
+ * - Ataque com dados: atacante até 3 dados (armies-1), defensor até 2 dados.
+ * - Comparação de dados em ordem decrescente; para cada comparação o maior vence.
+ * - Ao conquistar um território, ele passa a ser seu; movimento simples de exércitos é aplicado.
+ *
+ * Observação: regras simplificadas para manter o projeto didático e curto.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <stdbool.h>
+
+#define N_TERR 6
+#define PLAYER 1
+#define CPU 2
+
+typedef struct {
+    int id;
+    char name[20];
+    int owner;   /* PLAYER ou CPU */
+    int armies;  /* número de exércitos no território */
+} Territory;
+
+/* mapa de adjacência (simétrico): 1 = adjacente, 0 = não adjacente */
+static const int ADJ[N_TERR][N_TERR] = {
+    /* 0 1 2 3 4 5 */
+    { 0,1,1,0,0,0 }, /* 0 Amazônia -> 1,2 */
+    { 1,0,0,1,0,0 }, /* 1 Nordeste -> 0,3 */
+    { 1,0,0,1,0,1 }, /* 2 Centro-Oeste -> 0,3,5 */
+    { 0,1,1,0,1,0 }, /* 3 Sudeste -> 1,2,4 */
+    { 0,0,0,1,0,1 }, /* 4 Sul -> 3,5 */
+    { 0,0,1,0,1,0 }  /* 5 Pantanal -> 2,4 */
+};
+
+void init_territories(Territory t[]) {
+    const char *names[N_TERR] = {
+        "Amazonia", "Nordeste", "CentroOeste", "Sudeste", "Sul", "Pantanal"
+    };
+    for (int i = 0; i < N_TERR; ++i) {
+        t[i].id = i;
+        strncpy(t[i].name, names[i], sizeof(t[i].name)-1);
+        t[i].name[sizeof(t[i].name)-1] = '\0';
+        t[i].armies = 3;                 /* inicial: 3 exércitos por território */
+        t[i].owner = (i % 2 == 0) ? PLAYER : CPU; /* distribui alternado */
+    }
+}
+
+/* imprime o mapa/estado atual */
+void print_map(const Territory t[]) {
+    printf("\n--- MAPA ATUAL ---\n");
+    printf("ID  Nome          Dono   Exércitos\n");
+    printf("-----------------------------------\n");
+    for (int i = 0; i < N_TERR; ++i) {
+        const char *dono = (t[i].owner == PLAYER) ? "VOCE" : "CPU";
+        printf("%2d  %-13s %-5s   %2d\n", t[i].id, t[i].name, dono, t[i].armies);
+    }
+    printf("-----------------------------------\n");
+}
+
+/* conta quantos territórios um dono possui */
+int count_owned(const Territory t[], int owner) {
+    int c = 0;
+    for (int i = 0; i < N_TERR; ++i) if (t[i].owner == owner) c++;
+    return c;
+}
+
+/* calcula reforços simples: (territórios / 2) mínimo 1 */
+int calc_reinforcements(int owned_territories) {
+    int r = owned_territories / 2;
+    if (r < 1) r = 1;
+    return r;
+}
+
+/* verifica adjacência */
+bool adjacent(int a, int b) {
+    if (a < 0 || a >= N_TERR || b < 0 || b >= N_TERR) return false;
+    return ADJ[a][b] == 1;
+}
+
+/* ordena vetor de inteiros em ordem decrescente (bubble - suficiente para 3 elementos) */
+void sort_desc(int v[], int n) {
+    for (int i = 0; i < n-1; ++i)
+        for (int j = i+1; j < n; ++j)
+            if (v[j] > v[i]) {
+                int tmp = v[i]; v[i] = v[j]; v[j] = tmp;
+            }
+}
+
+/* resolve um ataque do território 'from' contra 'to' */
+void resolve_attack(Territory *from, Territory *to) {
+    int max_att = from->armies - 1;
+    if (max_att < 1) {
+        printf("Nao ha tropas suficientes para atacar de %s.\n", from->name);
+        return;
+    }
+
+    int att_dice = max_att > 3 ? 3 : max_att;
+    int def_dice = to->armies > 2 ? 2 : to->armies;
+    if (def_dice < 1) def_dice = 1;
+
+    int att[3] = {0,0,0};
+    int def[2] = {0,0};
+
+    for (int i = 0; i < att_dice; ++i) att[i] = rand() % 6 + 1;
+    for (int i = 0; i < def_dice; ++i) def[i] = rand() % 6 + 1;
+
+    sort_desc(att, att_dice);
+    sort_desc(def, def_dice);
+
+    printf("\n> %s (%d) ataca %s (%d) com %d dados vs %d dados\n",
+           from->name, from->armies, to->name, to->armies, att_dice, def_dice);
+
+    int rounds = (att_dice < def_dice) ? att_dice : def_dice;
+    for (int i = 0; i < rounds; ++i) {
+        printf("  dado atacante %d  vs  dado defensor %d -> ", att[i], def[i]);
+        if (att[i] > def[i]) {
+            to->armies -= 1;
+            if (to->armies < 0) to->armies = 0;
+            printf("defensor perde 1 (agora %d)\n", to->armies);
+        } else {
+            from->armies -= 1;
+            if (from->armies < 1) from->armies = 1; /* garante pelo menos 1 remanescente mínimo */
+            printf("atacante perde 1 (agora %d)\n", from->armies);
+        }
+    }
+}
+
+/* método simples para a CPU distribuir reforços (aleatório entre seus territórios) */
+void cpu_reinforce(Territory t[]) {
+    int owned = count_owned(t, CPU);
+    int reinf = calc_reinforcements(owned);
+    printf("\n[CPU] Reforços: %d\n", reinf);
+    for (int k = 0; k < reinf; ++k) {
+        int idx;
+        do {
+            idx = rand() % N_TERR;
+        } while (t[idx].owner != CPU);
+        t[idx].armies += 1;
+    }
+}
+
+/* método simples para a CPU atacar: percorre territórios e faz ataques aleatórios limitados */
+void cpu_attack(Territory t[]) {
+    int attacks = 0;
+    int max_attacks = 5; /* limite por turno para acelerar a jogada */
+    printf("\n[CPU] Fase de ataque...\n");
+    for (int i = 0; i < N_TERR && attacks < max_attacks; ++i) {
+        if (t[i].owner != CPU) continue;
+        if (t[i].armies < 2) continue;
+
+        /* procurar um inimigo adjacente */
+        int targets[6], nt = 0;
+        for (int j = 0; j < N_TERR; ++j)
+            if (adjacent(i,j) && t[j].owner != CPU) targets[nt++] = j;
+
+        if (nt == 0) continue;
+        int chosen = targets[rand() % nt];
+        resolve_attack(&t[i], &t[chosen]);
+        attacks++;
+
+        if (t[chosen].armies == 0) {
+            printf("[CPU] Conquistou %s!\n", t[chosen].name);
+            t[chosen].owner = CPU;
+            /* move 1 exército automaticamente (se possível) */
+            if (t[i].armies > 1) {
+                t[i].armies -= 1;
+                t[chosen].armies = 1;
+            } else {
+                /* caso raro, garantir ao menos 1 no conquistado */
+                t[chosen].armies = 1;
+            }
+        }
+    }
+    if (attacks == 0) printf("[CPU] Nenhum ataque realizado.\n");
+}
+
+/* função para checar vitória */
+int check_victory(const Territory t[]) {
+    int p = count_owned(t, PLAYER);
+    int c = count_owned(t, CPU);
+    if (p == N_TERR) return PLAYER;
+    if (c == N_TERR) return CPU;
+    return 0;
+}
+
+/* lê um inteiro seguro a partir do stdin, retorna -1 se entrada inválida */
+int read_int() {
+    char line[128];
+    if (!fgets(line, sizeof(line), stdin)) return -1;
+    int v;
+    if (sscanf(line, "%d", &v) != 1) return -1;
+    return v;
+}
+
+int main(void) {
+    Territory map[N_TERR];
+    srand((unsigned)time(NULL));
+    init_territories(map);
+
+    printf("=== Desafio War Estruturado - Tema 1 ===\n");
+    printf("Voce (PLAYER) x CPU\n");
+    printf("Comandos: informe IDs conforme listado. Use 0 para encerrar uma fase quando solicitado.\n");
+
+    while (1) {
+        /* checar vitória */
+        int win = check_victory(map);
+        if (win == PLAYER) { printf("\n=== PARABENS — VOCE VENCEU O DESAFIO WAR! ===\n"); break; }
+        if (win == CPU)    { printf("\n=== QUE PENA — CPU VENCEU. GAME OVER. ===\n"); break; }
+
+        /* === Turno do jogador === */
+        print_map(map);
+
+        int owned = count_owned(map, PLAYER);
+        int reinf = calc_reinforcements(owned);
+        printf("\n[VOCE] Reforços: %d. Distribua um por vez.\n", reinf);
+        for (int r = 0; r < reinf; ++r) {
+            printf("Escolha o ID do territorio para colocar 1 exército (restam %d): ", reinf - r);
+            int id = read_int();
+            if (id < 0 || id >= N_TERR || map[id].owner != PLAYER) {
+                printf("Entrada inválida ou territorio não é seu. Tente novamente e coloque no próximo.\n");
+                r--; /* re-tentar esta unidade de reforço */
+                continue;
+            }
+            map[id].armies += 1;
+        }
+
+        /* Fase de ataque do jogador */
+        printf("\n[VOCE] Fase de ataque. Para encerrar digite '-1'.\n");
+        while (1) {
+            print_map(map);
+            printf("Informe ID_origem ID_alvo (ou -1 para terminar ataque): ");
+            char line[128];
+            if (!fgets(line, sizeof(line), stdin)) break;
+            int a, b;
+            if (sscanf(line, "%d %d", &a, &b) < 1) { printf("Entrada inválida.\n"); continue; }
+            if (a == -1) break;
+            if (a < 0 || a >= N_TERR || b < 0 || b >= N_TERR) { printf("IDs fora do intervalo.\n"); continue; }
+            if (map[a].owner != PLAYER) { printf("Territorio de origem nao é seu.\n"); continue; }
+            if (!adjacent(a,b)) { printf("Territorios não são adjacentes.\n"); continue; }
+            if (map[b].owner == PLAYER) { printf("Alvo é seu proprio territorio.\n"); continue; }
+            if (map[a].armies < 2) { printf("Precisa ter pelo menos 2 exércitos para atacar de %s.\n", map[a].name); continue; }
+
+            resolve_attack(&map[a], &map[b]);
+
+            if (map[b].armies == 0) {
+                printf("\nVoce conquistou %s!\n", map[b].name);
+                map[b].owner = PLAYER;
+                /* mover 1 exército automaticamente se possível */
+                if (map[a].armies > 1) {
+                    map[a].armies -= 1;
+                    map[b].armies = 1;
+                } else {
+                    /* cenário raro: mantém 1 em ambos para evitar territórios com 0 */
+                    map[b].armies = 1;
+                }
+            }
+
+            if (check_victory(map) == PLAYER) {
+                print_map(map);
+                printf("\n=== PARABENS — VOCE CONQUISTOU O MAPA! ===\n");
+                return 0;
+            }
+        } /* fim fase ataque jogador */
+
+        /* === Turno da CPU === */
+        cpu_reinforce(map);
+        cpu_attack(map);
+
+        if (check_victory(map) == CPU) {
+            print_map(map);
+            printf("\n=== CPU DOMINOU O MAPA. ===\n");
+            return 0;
+        }
+
+        /* volta ao jogador */
+    } /* loop principal */
+
+    return 0;
+}
